@@ -1,26 +1,31 @@
-from dotenv import load_dotenv
 import os
 import openai
+import logging
+from typing import Optional
+from dotenv import load_dotenv
+import argparse
 
 load_dotenv()
-
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-def load_article(file_path):
-    """Wczytuje artykuł z pliku tekstowego."""
+def load_article(file_path: str) -> Optional[str]:
+    """Load the article content from a text file."""
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
             return file.read()
     except FileNotFoundError:
-        print(f"Błąd: Plik {file_path} nie został znaleziony.")
+        logging.error(f"File not found: {file_path}")
+        return None
+    except Exception as e:
+        logging.error(f"Error reading file {file_path}: {e}")
         return None
 
-
-def generate_html(article_text):
-    """Wysyła artykuł do OpenAI w celu wygenerowania kodu HTML."""
+def generate_html(article_text: str) -> Optional[str]:
+    """Send the article to OpenAI API and generate HTML."""
     if not article_text:
-        print("Nie podano treści artykułu.")
+        logging.warning("No article text provided.")
         return None
 
     prompt = (
@@ -35,29 +40,38 @@ def generate_html(article_text):
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             max_tokens=2000,
             temperature=0.7
         )
-        return response['choices'][0]['message']['content'].strip()
+        html_content = response['choices'][0]['message']['content'].strip()
+        logging.info("HTML content successfully generated.")
+        return html_content
     except openai.error.OpenAIError as e:
-        print(f"Błąd podczas komunikacji z API OpenAI: {e}")
+        logging.error(f"OpenAI API error: {e}")
         return None
 
-
-def save_html(output_path, html_content):
-    """Zapisuje kod HTML do pliku."""
+def save_to_file(file_path: str, content: str) -> None:
+    """Save content to a file."""
     try:
-        with open(output_path, 'w', encoding='utf-8') as file:
-            file.write(html_content)
+        with open(file_path, 'w', encoding='utf-8') as file:
+            file.write(content)
+        logging.info(f"File saved: {file_path}")
     except Exception as e:
-        print(f"Błąd podczas zapisywania pliku: {e}")
+        logging.error(f"Error saving file {file_path}: {e}")
 
+def validate_html(html_content: str) -> bool:
+    """Basic validation to check if the generated HTML meets the requirements."""
+    required_tags = ["<img", "alt=", "<figcaption>"]
+    if all(tag in html_content for tag in required_tags):
+        logging.info("HTML content validation passed.")
+        return True
+    else:
+        logging.warning("HTML content validation failed.")
+        return False
 
-def generate_template(template_path):
-    """Generuje pusty szablon HTML."""
+def generate_template(template_path: str) -> None:
+    """Generate an empty HTML template."""
     template_content = """
     <!DOCTYPE html>
     <html lang="en">
@@ -96,16 +110,10 @@ def generate_template(template_path):
     </body>
     </html>
     """
-    try:
-        with open(template_path, 'w', encoding='utf-8') as file:
-            file.write(template_content.strip())
-        print(f"Szablon zapisano w pliku {template_path}")
-    except Exception as e:
-        print(f"Błąd podczas generowania szablonu: {e}")
+    save_to_file(template_path, template_content.strip())
 
-
-def generate_preview(template_path, article_html, output_path):
-    """Łączy szablon z wygenerowanym artykułem i zapisuje jako pełny podgląd."""
+def generate_preview(template_path: str, article_html: str, output_path: str) -> None:
+    """Combine the template and article HTML to create a preview."""
     try:
         with open(template_path, 'r', encoding='utf-8') as template_file:
             template = template_file.read()
@@ -114,42 +122,40 @@ def generate_preview(template_path, article_html, output_path):
             "<!-- Miejsce na wklejenie artykułu -->", article_html
         )
 
-        with open(output_path, 'w', encoding='utf-8') as output_file:
-            output_file.write(full_html)
-        print(f"Podgląd zapisano w pliku {output_path}")
+        save_to_file(output_path, full_html)
     except Exception as e:
-        print(f"Błąd podczas generowania podglądu: {e}")
-
+        logging.error(f"Error generating preview: {e}")
 
 def main():
-    input_file = "artykul.txt"
-    article_output_file = "artykul.html"
-    template_file = "szablon.html"
-    preview_file = "podglad.html"
-    
-    print("Wczytywanie artykułu...")
-    article_text = load_article(input_file)
-    if not article_text:
-        print("Przerwano działanie programu z powodu braku treści artykułu.")
-        return
-    
-    print("Generowanie kodu HTML...")
-    html_content = generate_html(article_text)
-    if not html_content:
-        print("Nie udało się wygenerować kodu HTML.")
-        return
-    
-    print("Zapisywanie wygenerowanego HTML...")
-    save_html(article_output_file, html_content)
-    
-    print("Generowanie szablonu HTML...")
-    generate_template(template_file)
-    
-    print("Generowanie podglądu artykułu...")
-    generate_preview(template_file, html_content, preview_file)
-    
-    print(f"Zakończono! Pliki zapisane:\n - {article_output_file}\n - {template_file}\n - {preview_file}")
+    parser = argparse.ArgumentParser(description="Generate HTML from article using OpenAI API.")
+    parser.add_argument("--input", default="artykul.txt", help="Path to the input text file.")
+    parser.add_argument("--output_html", default="artykul.html", help="Path to the output HTML file.")
+    parser.add_argument("--template", default="szablon.html", help="Path to the HTML template file.")
+    parser.add_argument("--preview", default="podglad.html", help="Path to the preview HTML file.")
+    args = parser.parse_args()
 
+    logging.info("Loading article...")
+    article_text = load_article(args.input)
+    if not article_text:
+        logging.error("No article content found. Exiting.")
+        return
+    
+    logging.info("Generating HTML...")
+    html_content = generate_html(article_text)
+    if not html_content or not validate_html(html_content):
+        logging.error("HTML generation failed or validation failed. Exiting.")
+        return
+    
+    logging.info("Saving generated HTML...")
+    save_to_file(args.output_html, html_content)
+    
+    logging.info("Generating HTML template...")
+    generate_template(args.template)
+    
+    logging.info("Generating article preview...")
+    generate_preview(args.template, html_content, args.preview)
+    
+    logging.info(f"Process complete! Files saved:\n - {args.output_html}\n - {args.template}\n - {args.preview}")
 
 if __name__ == "__main__":
     main()
